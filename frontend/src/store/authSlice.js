@@ -2,7 +2,7 @@ import { createSlice } from "@reduxjs/toolkit";
 import axiosInstance from "../lib/axios.js";
 import toast from "react-hot-toast";
 import { addMessage } from "./chatSlice"; // to dispatch incoming messages
-import { connectSocket, disconnectSocket, getSocket } from "../lib/socket.js"; // new socket manager module
+import { connectSocket, disconnectSocket, getSocket } from "../lib/socket.js";
 
 const initialState = {
   authUser: null,
@@ -48,23 +48,35 @@ export const {
 
 export default authSlice.reducer;
 
+
+// Thunk that sets up socket event listeners and properly uses getState
+export const setupSocketListeners = () => (dispatch, getState) => {
+  const socket = getSocket();
+  console.log("Setting up socket listeners, socket:", socket);
+  
+  if (!socket) {
+    console.log("No socket found, skipping listener setup");
+    return;
+  }
+
+  socket.on("getOnlineUsers", (users) => {
+    console.log("Received online users:", users);
+    dispatch(setOnlineUsers(users));
+  });
+};
+
+
 export const checkAuth = () => async (dispatch) => {
   dispatch(setIsCheckingAuth(true));
   try {
     const res = await axiosInstance.get("/auth/check");
     dispatch(setAuthUser(res.data.user || res.data));
 
-    const socket = getSocket();
-    if (!socket && res.data.user?._id) {
-      const newSocket = connectSocket();
-
-      // Setup socket listeners
-      newSocket.on("newMessage", (msg) => {
-        dispatch(addMessage(msg));
-      });
-      newSocket.on("getOnlineUsers", (users) => {
-        dispatch(setOnlineUsers(users));
-      });
+    if (res.data.user?._id) {
+      // Connect socket FIRST
+      connectSocket();
+      // THEN setup listeners
+      dispatch(setupSocketListeners());
     }
   } catch (error) {
     console.log("Error in authCheck:", error);
@@ -82,15 +94,9 @@ export const signup = (data) => async (dispatch) => {
     dispatch(setAuthUser(res.data.user || res.data));
     toast.success("Account created successfully!");
 
-    const socket = getSocket();
-    if (!socket && res.data.user?._id) {
-      const newSocket = connectSocket();
-      newSocket.on("newMessage", (msg) => {
-        dispatch(addMessage(msg));
-      });
-      newSocket.on("getOnlineUsers", (users) => {
-        dispatch(setOnlineUsers(users));
-      });
+    if (res.data.user?._id) {
+      connectSocket();
+      dispatch(setupSocketListeners());
     }
   } catch (error) {
     toast.error(error.response?.data?.message || "Signup failed");
@@ -106,15 +112,9 @@ export const login = (data) => async (dispatch) => {
     dispatch(setAuthUser(res.data.user || res.data));
     toast.success("Logged in successfully");
 
-    const socket = getSocket();
-    if (!socket && res.data.user?._id) {
-      const newSocket = connectSocket();
-      newSocket.on("newMessage", (msg) => {
-        dispatch(addMessage(msg));
-      });
-      newSocket.on("getOnlineUsers", (users) => {
-        dispatch(setOnlineUsers(users));
-      });
+    if (res.data.user?._id) {
+      connectSocket();
+      dispatch(setupSocketListeners());
     }
   } catch (error) {
     toast.error(error.response?.data?.message || "Login failed");
@@ -123,14 +123,14 @@ export const login = (data) => async (dispatch) => {
   }
 };
 
+
 export const sendMessage = (messageData) => async (dispatch, getState) => {
   const { selectedUser } = getState().chat;
 
   try {
-    const res = await axiosInstance.post(
-      `/messages/send/${selectedUser._id}`,
-      { ...messageData }
-    );
+    const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, {
+      ...messageData,
+    });
 
     const socket = getSocket();
     if (socket) {

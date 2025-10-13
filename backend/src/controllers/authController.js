@@ -39,8 +39,17 @@ export const signup = async (req, res) => {
 
     // 5. Save to database
     await newUser.save();
-    //token and cookies
-    generateToken(newUser._id, res);
+
+    // Generate token
+    const token = generateToken(newUser._id, res);
+
+    // Set JWT cookie for session persistence
+    res.cookie("jwt", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+      sameSite: "lax",
+    });
 
     const mailOptions = {
       from: process.env.SENDER_EMAIL,
@@ -52,11 +61,14 @@ export const signup = async (req, res) => {
     await transporter.sendMail(mailOptions);
 
     return res.status(201).json({
-      _id: newUser._id,
-      email: newUser.email,
-      fullName: newUser.fullName,
-      profilePic: newUser.profilePic,
-      message: "Success",
+      user: {
+        _id: newUser._id,
+        email: newUser.email,
+        fullName: newUser.fullName,
+        profilePic: newUser.profilePic,
+      },
+      token, // this can remain if used client side
+      message: "Signup successful",
     });
   } catch (error) {
     console.error("Error in signup:", error.message);
@@ -83,13 +95,25 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    generateToken(user._id, res);
+    // Generate token
+    const token = generateToken(user._id, res);
+
+    // Set JWT cookie for session persistence
+    res.cookie("jwt", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+      sameSite: "lax",
+    });
 
     res.status(200).json({
-      _id: user._id,
-      email: user.email,
-      fullName: user.fullName,
-      profilePic: user.profilePic,
+      user: {
+        _id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        profilePic: user.profilePic,
+      },
+      token,
       message: "Login successful",
     });
   } catch (error) {
@@ -97,6 +121,7 @@ export const login = async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 export const logout = (req, res) => {
   res.cookie("jwt", "", {
@@ -108,26 +133,25 @@ export const logout = (req, res) => {
   res.json({ message: "Logout successful" });
 };
 
-
-export const updateProfile = async (req,res)=>{
-
-  try{
-    const{profilePic} = req.body;
-    if(!profilePic)
-      return res.status(400).json({message:"Profile Pic is required"});
+export const updateProfile = async (req, res) => {
+  try {
+    const { profilePic } = req.body;
+    if (!profilePic)
+      return res.status(400).json({ message: "Profile Pic is required" });
 
     const userId = req.user._id;
 
     const uploadResponse = await cloudinary.uploader.upload(profilePic);
 
-    const updatedUser = await User.findByIdAndUpdate(userId, {profilePic:uploadResponse.secure_url},{new:true})
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { profilePic: uploadResponse.secure_url },
+      { new: true }
+    );
 
     res.status(200).json(updatedUser);
+  } catch (error) {
+    console.log("Error in the update profile", error);
+    res.status(500).json({ message: "Internal server error" });
   }
-  catch(error){
-    console.log("Error in the update profile",error);
-    res.status(500).json({message:"Internal server error"});
-  }
-
-}
-
+};

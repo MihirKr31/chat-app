@@ -1,84 +1,165 @@
 import { createSlice } from "@reduxjs/toolkit";
-
-// Optionally: Get token from localStorage on load, for persistence
-const token = localStorage.getItem("token");
-const user = localStorage.getItem("user")
-  ? JSON.parse(localStorage.getItem("user"))
-  : null;
+import axiosInstance from "../lib/axios.js";
+import toast from "react-hot-toast";
+import { addMessage } from "./chatSlice"; // to dispatch incoming messages
+import { connectSocket, disconnectSocket, getSocket } from "../lib/socket.js"; // new socket manager module
 
 const initialState = {
-  user: user || null,
-  token: token || null,
-  isAuthenticated: !!token,
-  loading: false,
-  error: null,
+  authUser: null,
+  isCheckingAuth: true,
+  isSigningUp: false,
+  isLoggingIn: false,
+  onlineUsers: [],
 };
 
 const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    loginStart(state) {
-      state.loading = true;
-      state.error = null;
+    setAuthUser(state, action) {
+      state.authUser = action.payload;
     },
-    loginSuccess(state, action) {
-      state.user = action.payload.user; // user object from backend
-      state.token = action.payload.token; // token from backend
-      state.isAuthenticated = true;
-      state.loading = false;
-      state.error = null;
-      // Save to localStorage for persistence
-      localStorage.setItem("token", action.payload.token);
-      localStorage.setItem("user", JSON.stringify(action.payload.user));
+    setIsCheckingAuth(state, action) {
+      state.isCheckingAuth = action.payload;
     },
-    loginFailure(state, action) {
-      state.user = null;
-      state.token = null;
-      state.isAuthenticated = false;
-      state.loading = false;
-      state.error = action.payload; // error message
+    setIsSigningUp(state, action) {
+      state.isSigningUp = action.payload;
     },
-    logout(state) {
-      state.user = null;
-      state.token = null;
-      state.isAuthenticated = false;
-      state.loading = false;
-      state.error = null;
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+    setIsLoggingIn(state, action) {
+      state.isLoggingIn = action.payload;
     },
-
-    signupStart(state) {
-      state.loading = true;
-      state.error = null;
+    clearAuthUser(state) {
+      state.authUser = null;
     },
-    signupSuccess(state, action) {
-      state.user = action.payload.user;
-      state.token = action.payload.token;
-      state.isAuthenticated = true;
-      state.loading = false;
-      state.error = null;
-      localStorage.setItem("token", action.payload.token);
-      localStorage.setItem("user", JSON.stringify(action.payload.user));
-    },
-    signupFailure(state, action) {
-      state.user = null;
-      state.token = null;
-      state.isAuthenticated = false;
-      state.loading = false;
-      state.error = action.payload;
+    setOnlineUsers(state, action) {
+      state.onlineUsers = action.payload;
     },
   },
 });
 
 export const {
-  loginStart,
-  loginSuccess,
-  loginFailure,
-  logout,
-  signupStart,
-  signupSuccess,
-  signupFailure,
+  setAuthUser,
+  setIsCheckingAuth,
+  setIsSigningUp,
+  setIsLoggingIn,
+  clearAuthUser,
+  setOnlineUsers,
 } = authSlice.actions;
+
 export default authSlice.reducer;
+
+export const checkAuth = () => async (dispatch) => {
+  dispatch(setIsCheckingAuth(true));
+  try {
+    const res = await axiosInstance.get("/auth/check");
+    dispatch(setAuthUser(res.data.user || res.data));
+
+    const socket = getSocket();
+    if (!socket && res.data.user?._id) {
+      const newSocket = connectSocket();
+
+      // Setup socket listeners
+      newSocket.on("newMessage", (msg) => {
+        dispatch(addMessage(msg));
+      });
+      newSocket.on("getOnlineUsers", (users) => {
+        dispatch(setOnlineUsers(users));
+      });
+    }
+  } catch (error) {
+    console.log("Error in authCheck:", error);
+    dispatch(clearAuthUser());
+    disconnectSocket();
+  } finally {
+    dispatch(setIsCheckingAuth(false));
+  }
+};
+
+export const signup = (data) => async (dispatch) => {
+  dispatch(setIsSigningUp(true));
+  try {
+    const res = await axiosInstance.post("/auth/signup", data);
+    dispatch(setAuthUser(res.data.user || res.data));
+    toast.success("Account created successfully!");
+
+    const socket = getSocket();
+    if (!socket && res.data.user?._id) {
+      const newSocket = connectSocket();
+      newSocket.on("newMessage", (msg) => {
+        dispatch(addMessage(msg));
+      });
+      newSocket.on("getOnlineUsers", (users) => {
+        dispatch(setOnlineUsers(users));
+      });
+    }
+  } catch (error) {
+    toast.error(error.response?.data?.message || "Signup failed");
+  } finally {
+    dispatch(setIsSigningUp(false));
+  }
+};
+
+export const login = (data) => async (dispatch) => {
+  dispatch(setIsLoggingIn(true));
+  try {
+    const res = await axiosInstance.post("/auth/login", data);
+    dispatch(setAuthUser(res.data.user || res.data));
+    toast.success("Logged in successfully");
+
+    const socket = getSocket();
+    if (!socket && res.data.user?._id) {
+      const newSocket = connectSocket();
+      newSocket.on("newMessage", (msg) => {
+        dispatch(addMessage(msg));
+      });
+      newSocket.on("getOnlineUsers", (users) => {
+        dispatch(setOnlineUsers(users));
+      });
+    }
+  } catch (error) {
+    toast.error(error.response?.data?.message || "Login failed");
+  } finally {
+    dispatch(setIsLoggingIn(false));
+  }
+};
+
+export const sendMessage = (messageData) => async (dispatch, getState) => {
+  const { selectedUser } = getState().chat;
+
+  try {
+    const res = await axiosInstance.post(
+      `/messages/send/${selectedUser._id}`,
+      { ...messageData }
+    );
+
+    const socket = getSocket();
+    if (socket) {
+      socket.emit("sendMessage", res.data);
+    }
+
+    dispatch(addMessage({ ...res.data, tempId: messageData.tempId }));
+  } catch (error) {
+    toast.error(error.response?.data?.message || "Failed to send message");
+  }
+};
+
+export const logout = () => async (dispatch) => {
+  try {
+    await axiosInstance.post("/auth/logout");
+    dispatch(clearAuthUser());
+    disconnectSocket();
+    toast.success("Logged out successfully");
+  } catch (error) {
+    toast.error("Error logging out");
+  }
+};
+
+export const updateProfile = (data) => async (dispatch) => {
+  try {
+    const res = await axiosInstance.put("/auth/update-profile", data);
+    dispatch(setAuthUser(res.data));
+    toast.success("Profile updated successfully");
+  } catch (error) {
+    toast.error(error.response?.data?.message || "Update failed");
+  }
+};

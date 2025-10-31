@@ -1,8 +1,9 @@
 import { createSlice } from "@reduxjs/toolkit";
 import axiosInstance from "../lib/axios.js";
 import toast from "react-hot-toast";
-import { addMessage } from "./chatSlice"; // to dispatch incoming messages
+import { addMessage, fetchChats } from "./chatSlice"; // to dispatch incoming messages
 import { connectSocket, disconnectSocket, getSocket } from "../lib/socket.js";
+
 
 const initialState = {
   authUser: null,
@@ -63,6 +64,25 @@ export const setupSocketListeners = () => (dispatch, getState) => {
     console.log("Received online users:", users);
     dispatch(setOnlineUsers(users));
   });
+
+  socket.on("newMessage", (message) => {
+    console.log("Received new message:", message);
+    
+    const { selectedUser } = getState().chat;
+    const { authUser } = getState().auth;
+
+    if (message.senderId === authUser._id) {
+      console.log("Skipping own message");
+      return;
+    }
+
+    if (selectedUser && 
+       (message.senderId === selectedUser._id || message.receiverId === selectedUser._id)) {
+      dispatch(addMessage(message));
+    }
+
+    dispatch(fetchChats());
+  });
 };
 
 
@@ -87,11 +107,17 @@ export const checkAuth = () => async (dispatch) => {
   }
 };
 
+
+//data contains email and password
+//setIsSignUp true, meaning the sign up process has begun, useful for showing the loading spinner
 export const signup = (data) => async (dispatch) => {
   dispatch(setIsSigningUp(true));
   try {
+    //res contains the response sent by the backend when we send a signup request, normally contains the user's info
     const res = await axiosInstance.post("/auth/signup", data);
+    //setthe auth user as the res.data.user
     dispatch(setAuthUser(res.data.user || res.data));
+    
     toast.success("Account created successfully!");
 
     if (res.data.user?._id) {

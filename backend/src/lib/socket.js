@@ -44,7 +44,7 @@ export function initSocket(server) {
       }
 
       // Also emit to sender for immediate feedback
-      socket.emit("newMessage", message);
+      
     });
 
     socket.on("disconnect", () => {

@@ -27,7 +27,7 @@ const chatSlice = createSlice({
     },
     toggleSound(state) {
       state.isSoundEnabled = !state.isSoundEnabled;
-      localStorage.setItem('isSoundEnabled', String(state.isSoundEnabled));
+      localStorage.setItem("isSoundEnabled", String(state.isSoundEnabled));
     },
     setMessages(state, action) {
       state.messages = action.payload;
@@ -52,13 +52,28 @@ const chatSlice = createSlice({
       state.messages = [...state.messages, action.payload];
     },
     addMessage(state, action) {
-      // Remove optimistic message with same tempId if present, then add real one
-      if (action.payload.tempId) {
-        state.messages = state.messages.filter(
-          (msg) => msg._id !== action.payload.tempId
+      const { tempId } = action.payload;
+
+      // If this is a real message replacing optimistic one
+      if (tempId) {
+        const index = state.messages.findIndex(
+          (msg) => msg._id === tempId || msg.tempId === tempId
         );
+
+        if (index !== -1) {
+          state.messages[index] = action.payload;
+          return;
+        }
       }
-      state.messages = [...state.messages, action.payload];
+
+      // Prevent duplicates from socket events
+      const exists = state.messages.some(
+        (msg) => msg._id === action.payload._id
+      );
+
+      if (!exists) {
+        state.messages.push(action.payload);
+      }
     },
     clearChatData(state) {
       state.messages = [];
@@ -78,7 +93,8 @@ export const {
   setIsSoundEnabled,
   addOptimisticMessage,
   addMessage,
-  clearChatData,toggleSound 
+  clearChatData,
+  toggleSound,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;
@@ -121,13 +137,14 @@ export const fetchMessagesByUserId = (userId) => async (dispatch) => {
   }
 };
 
-
-
 export const sendMessage = (messageData) => async (dispatch, getState) => {
-  const { selectedUser, messages } = getState().chat;
+  const { selectedUser } = getState().chat;
   const { authUser } = getState().auth;
 
+  if (!selectedUser || !authUser) return;
+
   const tempId = `temp-${Date.now()}`;
+
   const optimisticMessage = {
     _id: tempId,
     senderId: authUser._id,
@@ -138,23 +155,21 @@ export const sendMessage = (messageData) => async (dispatch, getState) => {
     isOptimistic: true,
     tempId,
   };
+
   dispatch(addOptimisticMessage(optimisticMessage));
 
   try {
-    const res = await axiosInstance.post(
-      `/messages/send/${selectedUser._id}`,
-      { ...messageData, tempId }
-    );
+    const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, {
+      ...messageData,
+      tempId,
+    });
 
     dispatch(addMessage({ ...res.data, tempId }));
 
-    // Emit socket event after successful API send
     const socket = getSocket();
-    if (socket) {
-      socket.emit("sendMessage", res.data);
-    }
+    if (socket) socket.emit("sendMessage", res.data);
   } catch (error) {
-    dispatch(setMessages(messages));
+    dispatch(removeMessageById(tempId));
     toast.error(error.response?.data?.message || "Failed to send message");
   }
 };

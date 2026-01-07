@@ -53,37 +53,31 @@ export default authSlice.reducer;
 // Thunk that sets up socket event listeners and properly uses getState
 export const setupSocketListeners = () => (dispatch, getState) => {
   const socket = getSocket();
-  console.log("Setting up socket listeners, socket:", socket);
-  
-  if (!socket) {
-    console.log("No socket found, skipping listener setup");
-    return;
-  }
+  if (!socket) return;
+
+  // 🔥 VERY IMPORTANT: remove old listeners first
+  socket.off("getOnlineUsers");
+  socket.off("newMessage");
 
   socket.on("getOnlineUsers", (users) => {
-    console.log("Received online users:", users);
     dispatch(setOnlineUsers(users));
   });
 
   socket.on("newMessage", (message) => {
-    console.log("Received new message:", message);
-    
     const { selectedUser } = getState().chat;
     const { authUser } = getState().auth;
 
-    if (message.senderId === authUser._id) {
-      console.log("Skipping own message");
-      return;
-    }
-
-    if (selectedUser && 
-       (message.senderId === selectedUser._id || message.receiverId === selectedUser._id)) {
+    // ❌ don't ignore sender messages, because you already handle optimistic update
+    if (
+      selectedUser &&
+      (message.senderId === selectedUser._id ||
+       message.receiverId === selectedUser._id)
+    ) {
       dispatch(addMessage(message));
     }
-
-    dispatch(fetchChats());
   });
 };
+
 
 
 export const checkAuth = () => async (dispatch) => {
@@ -149,25 +143,6 @@ export const login = (data) => async (dispatch) => {
   }
 };
 
-
-export const sendMessage = (messageData) => async (dispatch, getState) => {
-  const { selectedUser } = getState().chat;
-
-  try {
-    const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, {
-      ...messageData,
-    });
-
-    const socket = getSocket();
-    if (socket) {
-      socket.emit("sendMessage", res.data);
-    }
-
-    dispatch(addMessage({ ...res.data, tempId: messageData.tempId }));
-  } catch (error) {
-    toast.error(error.response?.data?.message || "Failed to send message");
-  }
-};
 
 export const logout = () => async (dispatch) => {
   try {
